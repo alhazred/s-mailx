@@ -1403,7 +1403,7 @@ t_wysh() {
    set mager=$'\hey\\'
    varshow mager
 	__EOT
-   check 3 0 "${MBOX}" '1289698238 69'
+   check 3 0 "${MBOX}" '380053216 54'
 
    t_epilog "${@}"
 }
