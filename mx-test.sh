@@ -10018,8 +10018,7 @@ QUIT
    # }}}
 
    # Real EHLO authentication types {{{
-
-   smtp_script smtp -Ssmtp-config=-all,ehlo,plain
+   smtp_script smtp -Ssmtp-config=-all,,plain,, #,ehlo<-implied,plain
    { smtp_ehlo && printf '\001
 AUTH PLAIN AHN0ZWZmZW4AU3dheQ==
 ' &&
