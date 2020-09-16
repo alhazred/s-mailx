@@ -497,9 +497,9 @@ A file-based aka local executable
 initiating user.
 .
 .Pp
-When this command line option is used the given single addressee
+When this command line option is used the given
 .Ar from-addr
-will be assigned to the internal variable
+(parsed as a single address) will be assigned to the internal variable
 .Va from ,
 but in addition the command line option
 .Fl \&\&f Ar from-addr
@@ -4368,8 +4368,9 @@ locale dependent character set validity checks will be performed.
 .Mx
 .Mx
 .It Ic alternates , unalternates
-\*(NQ (alt) Manage a list of alternate addresses or names of the active
-user, members of which will be removed from recipient lists (except one).
+\*(NQ (alt) Manage a list of alternate addresses or names for the user,
+members of which will be removed from recipient lists (but see
+.Va metoo ) .
 There is a set of implicit alternates which is formed of the values of
 .Ev LOGNAME ,
 .Va from ,
@@ -6611,6 +6612,8 @@ as well as
 configure whether responded-to message shall be quoted etc.,
 .Va content-description-quote-attachment
 may be used.
+.Va record
+controls saving the response message.
 Setting
 .Va flipr
 will exchange this command with
@@ -8234,15 +8237,17 @@ The name of the command that generates the message, one of
 .Ql resend .
 This pseudo header always exists (in compose mode).
 .
-.It Ql Mailx-Raw-To:
-.It Ql Mailx-Raw-Cc:
-.It Ql Mailx-Raw-Bcc:
-Represent the frozen initial state of these headers before any
-transformation
-.Pf ( Ic alias ,
-.Ic alternates ,
-.Va recipients-in-cc
-etc.) took place.
+.It Ql Mailx-Edited-Sender:
+.It Ql Mailx-Edited-Origin:
+Different to the RFC 5322 originator fields of the otherwise identical
+.Ql -Orig-
+series below these might take into account
+.Va reply-to-honour
+and
+.Va reply-to-swap-in .
+This sender field will however be identical to
+.Ql Mailx-Orig-Sender:
+unless the edited (replaced) originator field is unambiguous.
 .
 .It Ql Mailx-Orig-Sender:
 .It Ql Mailx-Orig-From:
@@ -8252,8 +8257,18 @@ etc.) took place.
 The values of said headers of the original message which has been
 addressed by any of
 .Ic reply , forward , resend .
-The sender field is special as it is filled in with the sole sender
-according to RFC 5322 rules, it may thus be equal to the from field.
+The sender field is filled in according to what is described for
+.Va from .
+.
+.It Ql Mailx-Raw-To:
+.It Ql Mailx-Raw-Cc:
+.It Ql Mailx-Raw-Bcc:
+Represent the frozen initial state of these headers before any
+transformation
+.Pf ( Ic alias ,
+.Ic alternates ,
+.Va recipients-in-cc
+etc.) took place.
 .El
 .
 .
@@ -9706,21 +9721,20 @@ always inject.
 .
 .Mx
 .It Va from
-The address (or a list of addresses) to put into the
+The address, or a list of addresses to put into the
 .Ql From:
 field of the message header, quoting RFC 5322:
 the author(s) of the message, that is, the mailbox(es) of the person(s)
 or system(s) responsible for the writing of the message.
-According to that RFC setting the
-.Va sender
-variable is required if
-.Va \&\&from
-contains more than one address.
+If multiple addresses are used specifying a
+.Ql Sender:
+is required according to that RFC, which can be done via
+.Va sender .
 \*(ID Please expect automatic management of the
 .Va from
 and
 .Va sender
-relationship.
+relationship (requiring an address order in the former).
 Dependent on the context these addresses are handled as if they were in
 the list of
 .Ic alternates .
@@ -11788,16 +11802,22 @@ then; and/or do something like the following in the resource file:
 .It Va sender
 An address that is put into the
 .Ql Sender:
-field of outgoing messages, quoting RFC 5322: the mailbox of the agent
-responsible for the actual transmission of the message.
-This field should normally not be used unless the
+field of outgoing messages, quoting the standard RFC 5322: the mailbox
+of the agent responsible for the actual transmission of the message.
+For example, if Mary sends a mail for Alice, then Alice should be in
+.Ql From:
+whereas Mary should be present in
+.Ql Sender: .
+According to the standard this variable
+.Sy must
+be set if
 .Va from
-field contains more than one address, on which case it is required.
+contains multiple addresses.
 \*(ID Please expect automatic management of the
 .Va from
 and
 .Va sender
-relationship.
+relationship (requiring an address order in the former).
 Dependent on the context this address is handled as if it were in
 the list of
 .Ic alternates .

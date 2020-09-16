@@ -427,14 +427,16 @@ jdefault:
          a_X(ref, References);
          a_X(in_reply_to, In-Reply-To);
 
-         a_X(mailx_raw_to, Mailx-Raw-To);
-         a_X(mailx_raw_cc, Mailx-Raw-Cc);
-         a_X(mailx_raw_bcc, Mailx-Raw-Bcc);
          a_X(mailx_orig_sender, Mailx-Orig-Sender);
          a_X(mailx_orig_from, Mailx-Orig-From);
          a_X(mailx_orig_to, Mailx-Orig-To);
          a_X(mailx_orig_cc, Mailx-Orig-Cc);
          a_X(mailx_orig_bcc, Mailx-Orig-Bcc);
+         a_X(mailx_eded_sender, Mailx-Edited-Sender);
+         a_X(mailx_eded_origin, Mailx-Edited-Origin);
+         a_X(mailx_raw_to, Mailx-Raw-To);
+         a_X(mailx_raw_cc, Mailx-Raw-Cc);
+         a_X(mailx_raw_bcc, Mailx-Raw-Bcc);
 
          if((hp->h_flags & HF_CMD_MASK) != HF_NONE &&
                fputs(" " su_STRING(Mailx-Command), fp) == EOF){
@@ -493,22 +495,24 @@ jlist:
       a_X(References, ref);
       a_X(In-Reply-To, in_reply_to);
 
-      a_X(Mailx-Raw-To, mailx_raw_to);
-      a_X(Mailx-Raw-Cc, mailx_raw_cc);
-      a_X(Mailx-Raw-Bcc, mailx_raw_bcc);
       a_X(Mailx-Orig-Sender, mailx_orig_sender);
       a_X(Mailx-Orig-From, mailx_orig_from);
       a_X(Mailx-Orig-To, mailx_orig_to);
       a_X(Mailx-Orig-Cc, mailx_orig_cc);
       a_X(Mailx-Orig-Bcc, mailx_orig_bcc);
-
-#undef a_X
+      a_X(Mailx-Edited-Sender, mailx_eded_sender);
+      a_X(Mailx-Edited-Origin, mailx_eded_origin);
+      a_X(Mailx-Raw-To, mailx_raw_to);
+      a_X(Mailx-Raw-Cc, mailx_raw_cc);
+      a_X(Mailx-Raw-Bcc, mailx_raw_bcc);
 
       if(!su_cs_cmp_case(args->ca_arg.ca_str.s, cp = "Mailx-Command")){
          np = ((hp->h_flags & HF_CMD_MASK) != HF_NONE)
                ? R(struct mx_name*,-1) : NIL;
          goto jlist;
       }
+
+#undef a_X
 
       /* Free-form header fields */
       for(cp = args->ca_arg.ca_str.s; *cp != '\0'; ++cp)
@@ -752,16 +756,16 @@ jshow:
       a_X(References, ref);
       a_X(In-Reply-To, in_reply_to);
 
-      a_X(Mailx-Raw-To, mailx_raw_to);
-      a_X(Mailx-Raw-Cc, mailx_raw_cc);
-      a_X(Mailx-Raw-Bcc, mailx_raw_bcc);
       a_X(Mailx-Orig-Sender, mailx_orig_sender);
       a_X(Mailx-Orig-From, mailx_orig_from);
       a_X(Mailx-Orig-To, mailx_orig_to);
       a_X(Mailx-Orig-Cc, mailx_orig_cc);
       a_X(Mailx-Orig-Bcc, mailx_orig_bcc);
-
-#undef a_X
+      a_X(Mailx-Edited-Sender, mailx_eded_sender);
+      a_X(Mailx-Edited-Origin, mailx_eded_origin);
+      a_X(Mailx-Raw-To, mailx_raw_to);
+      a_X(Mailx-Raw-Cc, mailx_raw_cc);
+      a_X(Mailx-Raw-Bcc, mailx_raw_bcc);
 
       if(!su_cs_cmp_case(args->ca_arg.ca_str.s, cp = "Mailx-Command")){
          if((i = hp->h_flags & HF_CMD_MASK) == HF_NONE)
@@ -771,6 +775,8 @@ jshow:
             cp = NIL;
          goto jleave;
       }
+
+#undef a_X
 
       /* Free-form header fields */
       /* C99 */{
