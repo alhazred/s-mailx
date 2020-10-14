@@ -104,12 +104,13 @@ static int
 a_cmisc_echo(void *vp, FILE *fp, boole donl){/* TODO -t=enable FEXP!! */
    struct n_string s_b, *s;
    int rv;
-   boole doerr;
+   boole cm_local, doerr;
    char const **argv, *varname, **ap, *cp;
    NYD2_IN;
 
    argv = vp;
    varname = (n_pstate & n_PS_ARGMOD_VPUT) ? *argv++ : NIL;
+   cm_local = ((n_pstate & n_PS_ARGMOD_LOCAL) != 0);
    s = n_string_reserve(n_string_creat_auto(&s_b), 121/* XXX */);
 #ifdef mx_HAVE_ERRORS
    doerr = (fp == n_stderr &&  (n_psonce & n_PSO_INTERACTIVE));
@@ -144,7 +145,7 @@ a_cmisc_echo(void *vp, FILE *fp, boole donl){/* TODO -t=enable FEXP!! */
          e = su_err_no();
       rv |= ferror(fp) ? 1 : 0;
       n_pstate_err_no = e;
-   }else if(!n_var_vset(varname, (up)cp)){
+   }else if(!n_var_vset(varname, R(up,cp), cm_local)){
       n_pstate_err_no = su_ERR_NOTSUP;
       rv = -1;
    }else{
@@ -269,7 +270,7 @@ a_cmisc_read_set(char const *cp, char const *value){
       value = N_("not a valid variable name");
    else if(!n_var_is_user_writable(cp))
       value = N_("variable is read-only");
-   else if(!n_var_vset(cp, (up)value))
+   else if(!n_var_vset(cp, S(up,value), FAL0))
       value = N_("failed to update variable value");
    else{
       rv = TRU1;
@@ -304,6 +305,7 @@ c_shell(void *vp){
    sigset_t mask;
    int rv;
    FILE *fp;
+   boole cm_local;
    char const **argv, *varname, *varres;
    NYD_IN;
 
@@ -311,6 +313,7 @@ c_shell(void *vp){
    argv = vp;
    varname = (n_pstate & n_PS_ARGMOD_VPUT) ? *argv++ : NIL;
    varres = n_empty;
+   cm_local = ((n_pstate & n_PS_ARGMOD_LOCAL) != 0);
    fp = NIL;
 
    if(varname != NIL &&
@@ -363,7 +366,7 @@ c_shell(void *vp){
    }
 
    if(varname != NIL){
-      if(!n_var_vset(varname, R(up,varres))){
+      if(!n_var_vset(varname, R(up,varres), cm_local)){
          n_pstate_err_no = su_ERR_NOTSUP;
          rv = -1;
       }
@@ -403,11 +406,13 @@ int
 c_cwd(void *vp){
    struct n_string s_b, *s;
    uz l;
+   boole cm_local;
    char const *varname;
    NYD_IN;
 
    s = n_string_creat_auto(&s_b);
-   varname = (n_pstate & n_PS_ARGMOD_VPUT) ? *(char const**)v : NULL;
+   varname = (n_pstate & n_PS_ARGMOD_VPUT) ? *S(char const**,vp) : NIL;
+   cm_local = ((n_pstate & n_PS_ARGMOD_LOCAL) != 0);
    l = PATH_MAX;
 
    for(;; l += PATH_MAX){
@@ -420,19 +425,19 @@ c_cwd(void *vp){
          if(e == su_ERR_RANGE)
             continue;
          n_perr(_("Failed to getcwd(3)"), e);
-         v = NULL;
+         vp = NIL;
          break;
       }
 
-      if(varname != NULL){
-         if(!n_var_vset(varname, (up)s->s_dat))
-            v = NULL;
+      if(varname != NIL){
+         if(!n_var_vset(varname, R(up,s->s_dat), cm_local))
+            vp = NIL;
       }else{
          l = su_cs_len(s->s_dat);
          s = n_string_trunc(s, l);
          if(fwrite(s->s_dat, 1, s->s_len, n_stdout) == s->s_len &&
                putc('\n', n_stdout) == EOF)
-            v = NULL;
+            vp = NIL;
       }
       break;
    }
@@ -680,7 +685,8 @@ c_version(void *vp){
    cp = n_string_cp(s);
 
    if(n_pstate & n_PS_ARGMOD_VPUT){
-      if(n_var_vset(*(char const**)vp, (up)cp))
+      if(n_var_vset(*(char const**)vp, R(up,cp),
+            ((n_pstate & n_PS_ARGMOD_LOCAL) != 0)))
          rv = 0;
       else
          rv = -1;
