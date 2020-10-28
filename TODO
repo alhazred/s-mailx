@@ -159,6 +159,8 @@ Low-Level
     X.509 (PKIX) Certificates in the Context of Transport Layer Security
     (TLS)
   RFC 6152 - SMTP Service Extension for 8-bit MIME Transport
+  rfc 6211 - Cryptographic Message Syntax (CMS) Algorithm Identifier
+    Protection Attribute
   RFC 6409 - Message Submission for Mail
   rfc6530.txt Overview and Framework for Internationalized Email
   rfc6531.txt SMTP Extension for Internationalized Email
