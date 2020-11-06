@@ -45,12 +45,17 @@
 #include <su/mem.h>
 
 #include "mx/child.h"
+#include "mx/compat.h"
 #include "mx/colour.h"
 #include "mx/file-streams.h"
 /* TODO but only for creating chain! */
 #include "mx/filter-quote.h"
+#include "mx/go.h"
 #include "mx/iconv.h"
 #include "mx/ignore.h"
+#include "mx/mime.h"
+#include "mx/mime-enc.h"
+#include "mx/mime-parse.h"
 #include "mx/mime-type.h"
 #include "mx/random.h"
 #include "mx/sigs.h"
@@ -70,8 +75,8 @@ static void          _print_part_info(FILE *obuf, struct mimepart const *mpp,
 /* Create a pipe; if mpp is not NULL, place some n_PIPEENV_* environment
  * variables accordingly */
 static FILE *a_send_pipefile(enum sendaction action,
-      struct mx_mimetype_handler *mhp, struct mimepart const *mpp, FILE **qbuf,
-      char const *tmpname, int term_infd);
+      struct mx_mime_type_handler *mhp, struct mimepart const *mpp,
+      FILE **qbuf, char const *tmpname, int term_infd);
 
 /* Call mime_write() as appropriate and adjust statistics */
 su_SINLINE sz _out(char const *buf, uz len, FILE *fp,
@@ -141,17 +146,19 @@ _out(char const *buf, uz len, FILE *fp, enum conversion convert, enum
       }
    }
 
-   flags = ((int)action & _TD_EOF);
-   action &= ~_TD_EOF;
-   n = mime_write(buf, len, fp,
+   flags = (S(u32,action) & mx__MIME_DISPLAY_EOF);
+   action &= ~mx__MIME_DISPLAY_EOF;
+   n = mx_mime_write(buf, len, fp,
          action == SEND_MBOX ? CONV_NONE : convert,
          flags | ((action == SEND_TODISP || action == SEND_TODISP_ALL ||
             action == SEND_TODISP_PARTS ||
             action == SEND_QUOTE || action == SEND_QUOTE_ALL)
-         ?  TD_ISPR | TD_ICONV
+         ?  mx_MIME_DISPLAY_ICONV | mx_MIME_DISPLAY_ISPRINT
          : (action == SEND_TOSRCH || action == SEND_TOPIPE ||
                action == SEND_TOFILE)
-            ? TD_ICONV : (action == SEND_SHOW ? TD_ISPR : TD_NONE)),
+            ? mx_MIME_DISPLAY_ICONV
+            : (action == SEND_SHOW ? mx_MIME_DISPLAY_ISPRINT
+                  : mx_MIME_DISPLAY_NONE)),
          qf, outrest, inrest);
    if (n < 0)
       size = n;
@@ -263,8 +270,8 @@ _print_part_info(FILE *obuf, struct mimepart const *mpp, /* TODO strtofmt.. */
       _out("[-- ", 4, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
 
       ti.l = su_cs_len(ti.s = n_UNCONST(_("Defective MIME structure")));
-      makeprint(&ti, &to);
-      to.l = delctrl(to.s, to.l);
+      mx_makeprint(&ti, &to);
+      to.l = mx_del_cntrl(to.s, to.l);
       _out(to.s, to.l, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
       n_free(to.s);
 
@@ -284,7 +291,8 @@ _print_part_info(FILE *obuf, struct mimepart const *mpp, /* TODO strtofmt.. */
       _out("[-- ", 4, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
 
       ti.l = su_cs_len(ti.s = n_UNCONST(mpp->m_content_description));
-      mime_fromhdr(&ti, &to, TD_ISPR | TD_ICONV);
+      mx_mime_display_from_header(&ti, &to,
+         mx_MIME_DISPLAY_ICONV | mx_MIME_DISPLAY_ISPRINT);
       _out(to.s, to.l, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
       n_free(to.s);
 
@@ -304,8 +312,8 @@ _print_part_info(FILE *obuf, struct mimepart const *mpp, /* TODO strtofmt.. */
       _out("[-- ", 4, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
 
       ti.l = su_cs_len(ti.s = mpp->m_filename);
-      makeprint(&ti, &to);
-      to.l = delctrl(to.s, to.l);
+      mx_makeprint(&ti, &to);
+      to.l = mx_del_cntrl(to.s, to.l);
       _out(to.s, to.l, obuf, CONV_NONE, SEND_MBOX, qf, stats, NULL, NULL);
       n_free(to.s);
 
@@ -319,7 +327,7 @@ _print_part_info(FILE *obuf, struct mimepart const *mpp, /* TODO strtofmt.. */
 }
 
 static FILE *
-a_send_pipefile(enum sendaction action, struct mx_mimetype_handler *mthp,
+a_send_pipefile(enum sendaction action, struct mx_mime_type_handler *mthp,
       struct mimepart const *mpp, FILE **qbuf, char const *tmpname,
       int term_infd)
 {
@@ -340,7 +348,7 @@ a_send_pipefile(enum sendaction action, struct mx_mimetype_handler *mthp,
       }
    }
 
-   if((mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK) == mx_MIMETYPE_HDL_PTF){
+   if((mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) == mx_MIME_TYPE_HDL_PTF){
       union {int (*ptf)(void); char const *sh;} u;
 
       fflush(*qbuf);
@@ -404,7 +412,7 @@ env_addon[i++] = str_concat_csvl(&s,
    env_addon[i] = NULL;
    sh = ok_vlook(SHELL);
 
-   if(mthp->mth_flags & mx_MIMETYPE_HDL_NEEDSTERM){
+   if(mthp->mth_flags & mx_MIME_TYPE_HDL_NEEDSTERM){
       struct mx_child_ctx cc;
       sigset_t nset;
 
@@ -421,7 +429,7 @@ env_addon[i++] = str_concat_csvl(&s,
       rbuf = !mx_child_run(&cc) ? NIL : R(FILE*,-1);
    }else{
       rbuf = mx_fs_pipe_open(mthp->mth_shell_cmd, "W", sh, env_addon,
-            (mthp->mth_flags & mx_MIMETYPE_HDL_ASYNC ? mx_CHILD_FD_NULL
+            (mthp->mth_flags & mx_MIME_TYPE_HDL_ASYNC ? mx_CHILD_FD_NULL
              : fileno(*qbuf)));
 jerror:
       if(rbuf == NIL)
@@ -480,7 +488,7 @@ sendpart(struct message *zmp, struct mimepart *ip, FILE * volatile obuf,
    boole *anyoutput)
 {
    int volatile rv = 0;
-   struct mx_mimetype_handler mth_stack, * volatile mthp;
+   struct mx_mime_type_handler mth_stack, * volatile mthp;
    struct str outrest, inrest;
    boole hany, hign;
    enum sendaction oaction;
@@ -517,20 +525,20 @@ sendpart(struct message *zmp, struct mimepart *ip, FILE * volatile obuf,
          action == SEND_TOSRCH){
       dostat |= 4;
 
-      if(ip->m_mimetype != mx_MIMETYPE_DISCARD && level != 0 &&
+      if(ip->m_mime_type != mx_MIME_TYPE_DISCARD && level != 0 &&
             action != SEND_QUOTE && action != SEND_QUOTE_ALL){
          _print_part_info(obuf, ip, doitp, level, qf, stats);
          hany = TRU1;
       }
-      if(ip->m_parent != NIL && ip->m_parent->m_mimetype == mx_MIMETYPE_822){
+      if(ip->m_parent != NIL && ip->m_parent->m_mime_type == mx_MIME_TYPE_822){
          ASSERT(ip->m_flag & MNOFROM);
          hign = TRU1;
       }
    }
 
-   if(ip->m_mimetype == mx_MIMETYPE_DISCARD)
+   if(ip->m_mime_type == mx_MIME_TYPE_DISCARD)
       goto jheaders_skip;
-   else if(!hign && ip->m_mimetype == mx_MIMETYPE_822){
+   else if(!hign && ip->m_mime_type == mx_MIME_TYPE_822){
       switch(action){
       case SEND_TODISP:
       case SEND_TODISP_ALL:
@@ -555,7 +563,7 @@ sendpart(struct message *zmp, struct mimepart *ip, FILE * volatile obuf,
       }
    }
 
-   if (ip->m_mimetype == mx_MIMETYPE_PKCS7) {
+   if (ip->m_mime_type == mx_MIME_TYPE_PKCS7) {
       if (ip->m_multipart &&
             action != SEND_MBOX && action != SEND_RFC822 && action != SEND_SHOW)
          goto jheaders_skip;
@@ -724,16 +732,16 @@ jhdrtrunc:
           ip != ip->m_multipart) ||
          ((oaction == SEND_QUOTE || oaction == SEND_QUOTE_ALL) &&
           level != 0 && *anyoutput &&
-           (ip->m_mimetype != mx_MIMETYPE_DISCARD &&
-            ip->m_mimetype != mx_MIMETYPE_PKCS7 &&
-            ip->m_mimetype != mx_MIMETYPE_PKCS7 &&
-            ip->m_mimetype != mx_MIMETYPE_ALTERNATIVE &&
-            ip->m_mimetype != mx_MIMETYPE_RELATED &&
-            ip->m_mimetype != mx_MIMETYPE_DIGEST &&
-            ip->m_mimetype != mx_MIMETYPE_MULTI &&
-            ip->m_mimetype != mx_MIMETYPE_SIGNED &&
-            ip->m_mimetype != mx_MIMETYPE_ENCRYPTED))){
-         if(ip->m_mimetype != mx_MIMETYPE_822 || (dostat & 16)){
+           (ip->m_mime_type != mx_MIME_TYPE_DISCARD &&
+            ip->m_mime_type != mx_MIME_TYPE_PKCS7 &&
+            ip->m_mime_type != mx_MIME_TYPE_PKCS7 &&
+            ip->m_mime_type != mx_MIME_TYPE_ALTERNATIVE &&
+            ip->m_mime_type != mx_MIME_TYPE_RELATED &&
+            ip->m_mime_type != mx_MIME_TYPE_DIGEST &&
+            ip->m_mime_type != mx_MIME_TYPE_MULTI &&
+            ip->m_mime_type != mx_MIME_TYPE_SIGNED &&
+            ip->m_mime_type != mx_MIME_TYPE_ENCRYPTED))){
+         if(ip->m_mime_type != mx_MIME_TYPE_822 || (dostat & 16)){
             /*XXX (void)*/a_send_out_nl(obuf, NIL, stats);
             hany = TRU1;
          }
@@ -756,8 +764,8 @@ jheaders_skip:
       goto jsend;
    }
 
-   switch (ip->m_mimetype) {
-   case mx_MIMETYPE_822:
+   switch(ip->m_mime_type){
+   case mx_MIME_TYPE_822:
       switch (action) {
       case SEND_TODISP_PARTS:
          goto jleave;
@@ -782,9 +790,9 @@ jheaders_skip:
          break;
       }
       break;
-   case mx_MIMETYPE_TEXT_HTML:
-   case mx_MIMETYPE_TEXT:
-   case mx_MIMETYPE_TEXT_PLAIN:
+   case mx_MIME_TYPE_TEXT_HTML:
+   case mx_MIME_TYPE_TEXT:
+   case mx_MIME_TYPE_TEXT_PLAIN:
       switch (action) {
       case SEND_TODISP:
       case SEND_TODISP_ALL:
@@ -792,26 +800,26 @@ jheaders_skip:
       case SEND_QUOTE:
       case SEND_QUOTE_ALL:
          if((mthp = ip->m_handler) == NIL)
-            mx_mimetype_handler(mthp =
-               ip->m_handler = n_autorec_alloc(sizeof(*mthp)), ip, oaction);
-         switch(mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK){
-         case mx_MIMETYPE_HDL_NIL:
+            mx_mime_type_handler(mthp =
+               ip->m_handler = su_AUTO_ALLOC(sizeof(*mthp)), ip, oaction);
+         switch(mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
+         case mx_MIME_TYPE_HDL_NIL:
             if(oaction != SEND_TODISP_PARTS)
                break;
             /* FALLTHRU */
-         case mx_MIMETYPE_HDL_MSG:/* TODO these should be part of partinfo! */
+         case mx_MIME_TYPE_HDL_MSG:/* TODO these should be part of partinfo! */
             if(mthp->mth_msg.l > 0)
                _out(mthp->mth_msg.s, mthp->mth_msg.l, obuf, CONV_NONE,
                   SEND_MBOX, qf, stats, NULL, NULL);
             /* We would print this as plain text, so better force going home */
             goto jleave;
-         case mx_MIMETYPE_HDL_CMD:
+         case mx_MIME_TYPE_HDL_CMD:
             if(oaction == SEND_TODISP_PARTS &&
-                  (mthp->mth_flags & mx_MIMETYPE_HDL_COPIOUSOUTPUT))
+                  (mthp->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT))
                goto jleave;
             break;
-         case mx_MIMETYPE_HDL_TEXT:
-         case mx_MIMETYPE_HDL_PTF:
+         case mx_MIME_TYPE_HDL_TEXT:
+         case mx_MIME_TYPE_HDL_PTF:
             if(oaction == SEND_TODISP_PARTS)
                goto jleave;
             break;
@@ -823,11 +831,11 @@ jheaders_skip:
          break;
       }
       break;
-   case mx_MIMETYPE_DISCARD:
+   case mx_MIME_TYPE_DISCARD:
       if(oaction != SEND_DECRYPT)
          goto jleave;
       break;
-   case mx_MIMETYPE_PKCS7:
+   case mx_MIME_TYPE_PKCS7:
       if(oaction != SEND_RFC822 && oaction != SEND_SHOW &&
             ip->m_multipart != NIL)
          goto jmulti;
@@ -840,24 +848,24 @@ jheaders_skip:
       case SEND_QUOTE:
       case SEND_QUOTE_ALL:
          if((mthp = ip->m_handler) == NIL)
-            mx_mimetype_handler(mthp = ip->m_handler =
-               n_autorec_alloc(sizeof(*mthp)), ip, oaction);
-         switch(mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK){
+            mx_mime_type_handler(mthp = ip->m_handler =
+               su_AUTO_ALLOC(sizeof(*mthp)), ip, oaction);
+         switch(mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
          default:
-         case mx_MIMETYPE_HDL_NIL:
+         case mx_MIME_TYPE_HDL_NIL:
             if (oaction != SEND_TODISP && oaction != SEND_TODISP_ALL &&
                   (level != 0 || cnt))
                goto jleave;
             /* FALLTHRU */
-         case mx_MIMETYPE_HDL_MSG:/* TODO these should be part of partinfo! */
+         case mx_MIME_TYPE_HDL_MSG:/* TODO these should be part of partinfo! */
             if(mthp->mth_msg.l > 0)
                _out(mthp->mth_msg.s, mthp->mth_msg.l, obuf, CONV_NONE,
                   SEND_MBOX, qf, stats, NULL, NULL);
             /* We would print this as plain text, so better force going home */
             goto jleave;
-         case mx_MIMETYPE_HDL_CMD:
+         case mx_MIME_TYPE_HDL_CMD:
             if(oaction == SEND_TODISP_PARTS){
-               if(mthp->mth_flags & mx_MIMETYPE_HDL_COPIOUSOUTPUT)
+               if(mthp->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT)
                   goto jleave;
                else{
                   /* Because: interactive OR batch mode, so */
@@ -867,8 +875,8 @@ jheaders_skip:
                }
             }
             break;
-         case mx_MIMETYPE_HDL_TEXT:
-         case mx_MIMETYPE_HDL_PTF:
+         case mx_MIME_TYPE_HDL_TEXT:
+         case mx_MIME_TYPE_HDL_PTF:
             if(oaction == SEND_TODISP_PARTS)
                goto jleave;
             break;
@@ -878,7 +886,7 @@ jheaders_skip:
          break;
       }
       break;
-   case mx_MIMETYPE_ALTERNATIVE:
+   case mx_MIME_TYPE_ALTERNATIVE:
       if ((oaction == SEND_TODISP || oaction == SEND_QUOTE) &&
             !ok_blook(print_alternatives)) {
          /* XXX This (a) should not remain (b) should be own fun
@@ -922,13 +930,13 @@ jalter_redo:
                level = -ABS(level);
                flags |= _NEEDNL;
 
-               switch(np->m_mimetype){
-               case mx_MIMETYPE_ALTERNATIVE:
-               case mx_MIMETYPE_RELATED:
-               case mx_MIMETYPE_DIGEST:
-               case mx_MIMETYPE_SIGNED:
-               case mx_MIMETYPE_ENCRYPTED:
-               case mx_MIMETYPE_MULTI:
+               switch(np->m_mime_type){
+               case mx_MIME_TYPE_ALTERNATIVE:
+               case mx_MIME_TYPE_RELATED:
+               case mx_MIME_TYPE_DIGEST:
+               case mx_MIME_TYPE_SIGNED:
+               case mx_MIME_TYPE_ENCRYPTED:
+               case mx_MIME_TYPE_MULTI:
                   np->m_flag &= ~MDISPLAY;
                   mpsp = n_autorec_alloc(sizeof *mpsp);
                   mpsp->outer = curr;
@@ -940,7 +948,7 @@ jalter_redo:
                   goto jalter_redo;
                default:
                   if(!(np->m_flag & MDISPLAY)){
-                     if(np->m_mimetype != mx_MIMETYPE_DISCARD &&
+                     if(np->m_mime_type != mx_MIME_TYPE_DISCARD &&
                            (action == SEND_TODISP ||
                             action == SEND_TODISP_ALL ||
                             action == SEND_TODISP_PARTS))
@@ -977,11 +985,11 @@ jalter_leave:
          goto jleave;
       }
       /* FALLTHRU */
-   case mx_MIMETYPE_RELATED:
-   case mx_MIMETYPE_DIGEST:
-   case mx_MIMETYPE_SIGNED:
-   case mx_MIMETYPE_ENCRYPTED:
-   case mx_MIMETYPE_MULTI:
+   case mx_MIME_TYPE_RELATED:
+   case mx_MIME_TYPE_DIGEST:
+   case mx_MIME_TYPE_SIGNED:
+   case mx_MIME_TYPE_ENCRYPTED:
+   case mx_MIME_TYPE_MULTI:
       switch(action){
       case SEND_TODISP:
       case SEND_TODISP_ALL:
@@ -995,7 +1003,7 @@ jalter_leave:
 jmulti:
          if((oaction == SEND_TODISP || oaction == SEND_TODISP_ALL) &&
              ip->m_multipart != NIL &&
-             ip->m_multipart->m_mimetype == mx_MIMETYPE_DISCARD &&
+             ip->m_multipart->m_mime_type == mx_MIME_TYPE_DISCARD &&
              ip->m_multipart->m_nextpart == NULL) {
             char const *x = _("[Missing multipart boundary - use `show' "
                   "to display the raw message]\n");
@@ -1007,7 +1015,7 @@ jmulti:
          for (np = ip->m_multipart; np != NULL; np = np->m_nextpart) {
             boole volatile ispipe;
 
-            if(np->m_mimetype == mx_MIMETYPE_DISCARD &&
+            if(np->m_mime_type == mx_MIME_TYPE_DISCARD &&
                   oaction != SEND_DECRYPT)
                continue;
 
@@ -1024,7 +1032,7 @@ jmulti:
                 * TODO oh, wait, we did ask for a filename for this MIME mail,
                 * TODO and that outer container is useless anyway ;-P */
                if(np->m_multipart != NULL &&
-                     np->m_mimetype != mx_MIMETYPE_822){
+                     np->m_mime_type != mx_MIME_TYPE_822){
                   if((obuf = mx_fs_open(n_path_devnull, "w")) == NIL)
                      continue;
                }else if((obuf = newfile(np, &ispipe)) == NIL)
@@ -1055,7 +1063,7 @@ jmulti:
             quoteflt_reset(qf, origobuf);
 
             if(oaction == SEND_QUOTE){
-               if(ip->m_mimetype != mx_MIMETYPE_RELATED)
+               if(ip->m_mime_type != mx_MIME_TYPE_RELATED)
                   break;
             }
             if(oaction == SEND_TOFILE && obuf != origobuf){
@@ -1079,25 +1087,25 @@ jpipe_close:
    if (doitp == mx_IGNORE_ALL && level == 0) /* skip final blank line */
       --cnt;
    switch (ip->m_mime_enc) {
-   case MIMEE_BIN:
-   case MIMEE_7B:
-   case MIMEE_8B:
+   case mx_MIME_ENC_BIN:
+   case mx_MIME_ENC_7B:
+   case mx_MIME_ENC_8B:
       convert = CONV_NONE;
       break;
-   case MIMEE_QP:
+   case mx_MIME_ENC_QP:
       convert = CONV_FROMQP;
       break;
-   case MIMEE_B64:
-      switch(ip->m_mimetype){
-      case mx_MIMETYPE_TEXT:
-      case mx_MIMETYPE_TEXT_PLAIN:
-      case mx_MIMETYPE_TEXT_HTML:
+   case mx_MIME_ENC_B64:
+      switch(ip->m_mime_type){
+      case mx_MIME_TYPE_TEXT:
+      case mx_MIME_TYPE_TEXT_PLAIN:
+      case mx_MIME_TYPE_TEXT_HTML:
          convert = CONV_FROMB64_T;
          break;
       default:
-         switch (mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK) {
-         case mx_MIMETYPE_HDL_TEXT:
-         case mx_MIMETYPE_HDL_PTF:
+         switch (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) {
+         case mx_MIME_TYPE_HDL_TEXT:
+         case mx_MIME_TYPE_HDL_PTF:
             convert = CONV_FROMB64_T;
             break;
          default:
@@ -1128,13 +1136,13 @@ jpipe_close:
             oaction == SEND_TODISP_PARTS ||
             oaction == SEND_QUOTE || oaction == SEND_QUOTE_ALL ||
             oaction == SEND_TOSRCH || oaction == SEND_TOFILE) &&
-         (ip->m_mimetype == mx_MIMETYPE_TEXT_PLAIN ||
-            ip->m_mimetype == mx_MIMETYPE_TEXT_HTML ||
-            ip->m_mimetype == mx_MIMETYPE_TEXT ||
-            (mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK
-               ) == mx_MIMETYPE_HDL_TEXT ||
-            (mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK
-               ) == mx_MIMETYPE_HDL_PTF)) {
+         (ip->m_mime_type == mx_MIME_TYPE_TEXT_PLAIN ||
+            ip->m_mime_type == mx_MIME_TYPE_TEXT_HTML ||
+            ip->m_mime_type == mx_MIME_TYPE_TEXT ||
+            (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK
+               ) == mx_MIME_TYPE_HDL_TEXT ||
+            (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK
+               ) == mx_MIME_TYPE_HDL_PTF)) {
       char const *tcs;
 
       tcs = ok_vlook(ttycharset);
@@ -1149,9 +1157,9 @@ jpipe_close:
    }
 #endif
 
-   switch (mthp->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK) {
-   case mx_MIMETYPE_HDL_CMD:
-      if(!(mthp->mth_flags & mx_MIMETYPE_HDL_COPIOUSOUTPUT)){
+   switch (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) {
+   case mx_MIME_TYPE_HDL_CMD:
+      if(!(mthp->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT)){
          if(oaction != SEND_TODISP_PARTS)
             goto jmthp_default;
          /* FIXME Ach, what a hack!  We need filters.. v15! */
@@ -1159,47 +1167,48 @@ jpipe_close:
             action = SEND_TOPIPE;
       }
       /* FALLTHRU */
-   case mx_MIMETYPE_HDL_PTF:
+   case mx_MIME_TYPE_HDL_PTF:
       tmpname = NULL;
       qbuf = obuf;
 
       term_infd = mx_CHILD_FD_PASS;
-      if(mthp->mth_flags & (mx_MIMETYPE_HDL_TMPF | mx_MIMETYPE_HDL_NEEDSTERM)){
+      if(mthp->mth_flags &
+            (mx_MIME_TYPE_HDL_TMPF | mx_MIME_TYPE_HDL_NEEDSTERM)){
          struct mx_fs_tmp_ctx *fstcp;
          char const *pref;
          BITENUM_IS(u32,mx_fs_oflags) of;
 
          of = mx_FS_O_RDWR | mx_FS_O_REGISTER;
 
-         if(!(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF)){
+         if(!(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF)){
             term_infd = 0;
-            mthp->mth_flags |= mx_MIMETYPE_HDL_TMPF_FILL;
+            mthp->mth_flags |= mx_MIME_TYPE_HDL_TMPF_FILL;
             of |= mx_FS_O_UNLINK;
             pref = "mtanonfill";
          }else{
             /* (async and unlink are mutual exclusive) */
-            if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_UNLINK)
+            if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_UNLINK)
                of |= mx_FS_O_REGISTER_UNLINK;
 
-            if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_NAMETMPL){
+            if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_NAMETMPL){
                pref = mthp->mth_tmpf_nametmpl;
-               if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_NAMETMPL_SUFFIX)
+               if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_NAMETMPL_SUFFIX)
                   of |= mx_FS_O_SUFFIX;
-            }else if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_FILL)
+            }else if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_FILL)
                pref = "mimetypefill";
             else
                pref = "mimetype";
          }
 
          if((pbuf = mx_fs_tmp_open(pref, of,
-                  (mthp->mth_flags & mx_MIMETYPE_HDL_TMPF ? &fstcp : NIL))
+                  (mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF ? &fstcp : NIL))
                ) == NIL)
             goto jesend;
 
-         if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF)
+         if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF)
             tmpname = fstcp->fstc_filename; /* In autorec storage! */
 
-         if(mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_FILL){
+         if(mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_FILL){
             action = SEND_TOPIPE;
             if(term_infd == 0)
                term_infd = fileno(pbuf);
@@ -1215,7 +1224,7 @@ jesend:
          pbuf = qbuf = NIL;
          rv = -1;
          goto jend;
-      }else if((mthp->mth_flags & mx_MIMETYPE_HDL_NEEDSTERM) &&
+      }else if((mthp->mth_flags & mx_MIME_TYPE_HDL_NEEDSTERM) &&
             pbuf == R(FILE*,-1)){
          pbuf = qbuf = NIL;
          goto jend;
@@ -1232,7 +1241,7 @@ jesend:
 
    default:
 jmthp_default:
-      mthp->mth_flags = mx_MIMETYPE_HDL_NIL;
+      mthp->mth_flags = mx_MIME_TYPE_HDL_NIL;
       pbuf = qbuf = obuf;
       break;
    }
@@ -1277,7 +1286,8 @@ jsend:
    while(!eof && fgetline(linedat, linesize, &cnt, &linelen, ibuf, FAL0)){
 joutln:
       if (_out(*linedat, linelen, pbuf, convert, action, qf, stats, &outrest,
-            (action & _TD_EOF ? NULL : &inrest)) < 0 || ferror(pbuf)) {
+               (action & mx__MIME_DISPLAY_EOF ? NIL : &inrest)) < 0 ||
+            ferror(pbuf)) {
          rv = -1; /* XXX Should bail away?! */
          break;
       }
@@ -1287,12 +1297,12 @@ joutln:
    if(eof <= FAL0 && rv >= 0 && (outrest.l != 0 || inrest.l != 0)){
       linelen = 0;
       if(eof || inrest.l == 0)
-         action |= _TD_EOF;
+         action |= mx__MIME_DISPLAY_EOF;
       eof = eof ? TRU1 : TRUM1;
       goto joutln;
    }
    n_pstate &= ~n_PS_BASE64_STRIP_CR;
-   action &= ~_TD_EOF;
+   action &= ~mx__MIME_DISPLAY_EOF;
 
    /* TODO HACK: when sending to the display we yet get fooled if a message
     * TODO doesn't end in a newline, because of our input/output 1:1.
@@ -1308,8 +1318,8 @@ joutln:
       *anyoutput = TRU1;
    stats = save_stats;
 
-   if (rv >= 0 && (mthp->mth_flags & mx_MIMETYPE_HDL_TMPF_FILL)) {
-      mthp->mth_flags &= ~mx_MIMETYPE_HDL_TMPF_FILL;
+   if (rv >= 0 && (mthp->mth_flags & mx_MIME_TYPE_HDL_TMPF_FILL)) {
+      mthp->mth_flags &= ~mx_MIME_TYPE_HDL_TMPF_FILL;
       fflush(pbuf);
       really_rewind(pbuf);
       /* Don't fs_close() a tmp_open() thing due to FS_O_UNREGISTER_UNLINK++ */
@@ -1328,7 +1338,7 @@ joutln:
 
 jend:
    if(pbuf != qbuf){
-      mx_fs_pipe_close(pbuf, !(mthp->mth_flags & mx_MIMETYPE_HDL_ASYNC));
+      mx_fs_pipe_close(pbuf, !(mthp->mth_flags & mx_MIME_TYPE_HDL_ASYNC));
       safe_signal(SIGPIPE, oldpipe);
       if (rv >= 0 && qbuf != NULL && qbuf != obuf){
          *anyoutput = TRU1;
@@ -1355,17 +1365,17 @@ _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
    NYD_IN;
 
    for(; mpp != NULL; mpp = mpp->m_nextpart){
-      switch(mpp->m_mimetype){
-      case mx_MIMETYPE_TEXT_PLAIN:
+      switch(mpp->m_mime_type){
+      case mx_MIME_TYPE_TEXT_PLAIN:
          if(!want_rich)
             goto jflag;
          continue;
-      case mx_MIMETYPE_ALTERNATIVE:
-      case mx_MIMETYPE_RELATED:
-      case mx_MIMETYPE_DIGEST:
-      case mx_MIMETYPE_SIGNED:
-      case mx_MIMETYPE_ENCRYPTED:
-      case mx_MIMETYPE_MULTI:
+      case mx_MIME_TYPE_ALTERNATIVE:
+      case mx_MIME_TYPE_RELATED:
+      case mx_MIME_TYPE_DIGEST:
+      case mx_MIME_TYPE_SIGNED:
+      case mx_MIME_TYPE_ENCRYPTED:
+      case mx_MIME_TYPE_MULTI:
          /* Be simple and recurse */
          if (_send_al7ive_have_better(mpp->m_multipart, action, want_rich))
             goto jleave;
@@ -1375,14 +1385,14 @@ _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
       }
 
       if(mpp->m_handler == NIL)
-         mx_mimetype_handler(mpp->m_handler =
-            n_autorec_alloc(sizeof(*mpp->m_handler)), mpp, action);
-      switch(mpp->m_handler->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK){
-      case mx_MIMETYPE_HDL_TEXT:
+         mx_mime_type_handler(mpp->m_handler =
+            su_AUTO_ALLOC(sizeof(*mpp->m_handler)), mpp, action);
+      switch(mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
+      case mx_MIME_TYPE_HDL_TEXT:
          if (!want_rich)
             goto jflag;
          break;
-      case mx_MIMETYPE_HDL_PTF:
+      case mx_MIME_TYPE_HDL_PTF:
          if (want_rich) {
 jflag:
             mpp->m_flag |= MDISPLAY;
@@ -1391,9 +1401,9 @@ jflag:
             rv = TRU1;
          }
          break;
-      case mx_MIMETYPE_HDL_CMD:
+      case mx_MIME_TYPE_HDL_CMD:
          if(want_rich &&
-               (mpp->m_handler->mth_flags & mx_MIMETYPE_HDL_COPIOUSOUTPUT))
+               (mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT))
             goto jflag;
          /* FALLTHRU */
       default:
@@ -1416,17 +1426,17 @@ _send_al7ive_flag_tree(struct mimepart *mpp, enum sendaction action,
    hot = ((mpp->m_parent->m_flag & MDISPLAY) != 0);
 
    for(; mpp != NIL; mpp = mpp->m_nextpart){
-      switch(mpp->m_mimetype){
-      case mx_MIMETYPE_TEXT_PLAIN:
+      switch(mpp->m_mime_type){
+      case mx_MIME_TYPE_TEXT_PLAIN:
          if(hot && !want_rich)
             mpp->m_flag |= MDISPLAY;
          continue;
-      case mx_MIMETYPE_ALTERNATIVE:
-      case mx_MIMETYPE_RELATED:
-      case mx_MIMETYPE_DIGEST:
-      case mx_MIMETYPE_SIGNED:
-      case mx_MIMETYPE_ENCRYPTED:
-      case mx_MIMETYPE_MULTI:
+      case mx_MIME_TYPE_ALTERNATIVE:
+      case mx_MIME_TYPE_RELATED:
+      case mx_MIME_TYPE_DIGEST:
+      case mx_MIME_TYPE_SIGNED:
+      case mx_MIME_TYPE_ENCRYPTED:
+      case mx_MIME_TYPE_MULTI:
          /* Be simple and recurse */
          if (_send_al7ive_have_better(mpp->m_multipart, action, want_rich))
             goto jleave;
@@ -1436,20 +1446,20 @@ _send_al7ive_flag_tree(struct mimepart *mpp, enum sendaction action,
       }
 
       if(mpp->m_handler == NIL)
-         mx_mimetype_handler(mpp->m_handler =
-            n_autorec_alloc(sizeof(*mpp->m_handler)), mpp, action);
-      switch(mpp->m_handler->mth_flags & mx_MIMETYPE_HDL_TYPE_MASK){
-      case mx_MIMETYPE_HDL_TEXT:
+         mx_mime_type_handler(mpp->m_handler =
+            su_AUTO_ALLOC(sizeof(*mpp->m_handler)), mpp, action);
+      switch(mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
+      case mx_MIME_TYPE_HDL_TEXT:
          if (hot && !want_rich)
             mpp->m_flag |= MDISPLAY;
          break;
-      case mx_MIMETYPE_HDL_PTF:
+      case mx_MIME_TYPE_HDL_PTF:
          if (hot && want_rich)
             mpp->m_flag |= MDISPLAY;
          break;
-      case mx_MIMETYPE_HDL_CMD:
+      case mx_MIME_TYPE_HDL_CMD:
          if (hot && want_rich &&
-               (mpp->m_handler->mth_flags & mx_MIMETYPE_HDL_COPIOUSOUTPUT))
+               (mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT))
             mpp->m_flag |= MDISPLAY;
          break;
          break;
@@ -1475,8 +1485,8 @@ newfile(struct mimepart *ip, boole volatile *ispipe)
    if (f != NULL && f != (char*)-1) {
       in.s = f;
       in.l = su_cs_len(f);
-      makeprint(&in, &out);
-      out.l = delctrl(out.s, out.l);
+      mx_makeprint(&in, &out);
+      out.l = mx_del_cntrl(out.s, out.l);
       f = savestrbuf(out.s, out.l);
       n_free(out.s);
    }
@@ -1498,7 +1508,7 @@ newfile(struct mimepart *ip, boole volatile *ispipe)
          " (", ip->m_ct_type_plain, "): ", NULL);
 jgetname:
       while(mx_tty_getfilename(shoup,
-            (n_GO_INPUT_CTX_DEFAULT | n_GO_INPUT_HIST_ADD), prompt.s,
+            (mx_GO_INPUT_CTX_DEFAULT | mx_GO_INPUT_HIST_ADD), prompt.s,
             ((f != R(char*,-1) && f != NIL) ? n_shexp_quote_cp(f, FAL0) : NIL
             )) < TRU1){
       }
@@ -1698,7 +1708,7 @@ sendmp(struct message *mp, FILE *obuf, struct mx_ignore const *doitp,
    struct quoteflt qf;
    boole anyoutput;
    FILE *ibuf;
-   enum mime_parse_flags mpf;
+   BITENUM_IS(u32,mx_mime_parse_flags) mpf;
    struct mimepart *ip;
    uz linesize, cnt, size, i;
    char *linedat;
@@ -1800,13 +1810,13 @@ sendmp(struct message *mp, FILE *obuf, struct mx_ignore const *doitp,
    if (size > 0 && stats != NULL)
       *stats += size;
 
-   mpf = MIME_PARSE_NONE;
-   if (action != SEND_MBOX && action != SEND_RFC822 && action != SEND_SHOW)
-      mpf |= MIME_PARSE_PARTS | MIME_PARSE_DECRYPT;
+   mpf = mx_MIME_PARSE_NONE;
+   if(action != SEND_MBOX && action != SEND_RFC822 && action != SEND_SHOW)
+      mpf |= mx_MIME_PARSE_PARTS | mx_MIME_PARSE_DECRYPT;
    if(action == SEND_TODISP || action == SEND_TODISP_ALL ||
          action == SEND_QUOTE || action == SEND_QUOTE_ALL)
-      mpf |= MIME_PARSE_FOR_USER_CONTEXT;
-   if ((ip = mime_parse_msg(mp, mpf)) == NULL)
+      mpf |= mx_MIME_PARSE_FOR_USER_CONTEXT;
+   if((ip = mx_mime_parse_msg(mp, mpf)) == NIL)
       goto jleave;
 
    anyoutput = FAL0;

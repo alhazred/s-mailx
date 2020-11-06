@@ -63,10 +63,12 @@ su_EMPTY_FILE()
 #include <su/utf.h>
 
 #include "mx/cmd.h"
+#include "mx/compat.h"
 #include "mx/cred-auth.h"
 #include "mx/cred-md5.h"
 #include "mx/iconv.h"
 #include "mx/file-streams.h"
+#include "mx/mime-enc.h"
 #include "mx/sigs.h"
 #include "mx/net-socket.h"
 #include "mx/ui-str.h"
@@ -1138,7 +1140,7 @@ _imap_maincatch(int s)
       n_err_sighdl(_("Interrupt\n"));
       return;
    }
-   n_go_onintr_for_imap();
+   mx_go_onintr_for_imap();
 }
 
 static enum okay
@@ -1207,7 +1209,7 @@ imap_noop(void)
 jleave:
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -1548,7 +1550,7 @@ jerr_cred:
 
    cnt += a_MAX;
 #undef a_MAX
-   if((cnt = b64_encode_calc_size(cnt)) == UZ_MAX)
+   if((cnt = mx_b64_enc_calc_size(cnt)) == UZ_MAX)
       goto jerr_cred;
 
    cp = n_lofi_alloc(cnt +1);
@@ -1556,7 +1558,7 @@ jerr_cred:
    /* Then create login query */
    i = snprintf(cp, cnt +1, "user=%s\001auth=Bearer %s\001\001",
          ccp->cc_user.s, ccp->cc_pass.s);
-   if(b64_encode_buf(&b64, cp, i, B64_SALLOC) == NIL)
+   if(mx_b64_enc_buf(&b64, cp, i, mx_B64_AUTO_ALLOC) == NIL)
       goto jleave;
    else{
       char const *tp;
@@ -1629,7 +1631,7 @@ a_imap_external(struct mailbox *mp, struct mx_cred_ctx *ccp){
       cnt = ccp->cc_user.l = !nsaslir;
    }else{
       cnt = ccp->cc_user.l;
-      cnt = b64_encode_calc_size(cnt);
+      cnt = mx_b64_enc_calc_size(cnt);
    }
    if(cnt >= UZ_MAX - a_MAX){
       n_err(_("Credentials overflow buffer sizes\n"));
@@ -1654,7 +1656,7 @@ a_imap_external(struct mailbox *mp, struct mx_cred_ctx *ccp){
    if(!nsaslir){
       if(ccp->cc_authtype != mx_CRED_AUTHTYPE_EXTERNANON){
          s.s = &cp[++cnt];
-         b64_encode_buf(&s, ccp->cc_user.s, ccp->cc_user.l, B64_BUF);
+         mx_b64_enc_buf(&s, ccp->cc_user.s, ccp->cc_user.l, mx_B64_BUF);
          cnt += s.l;
       }else{
          su_mem_copy(&cp[++cnt], ccp->cc_user.s, ccp->cc_user.l);
@@ -1674,7 +1676,7 @@ a_imap_external(struct mailbox *mp, struct mx_cred_ctx *ccp){
 
       if(ccp->cc_authtype != mx_CRED_AUTHTYPE_EXTERNANON){
          s.s = &cp[cnt = 0];
-         b64_encode_buf(&s, ccp->cc_user.s, ccp->cc_user.l, B64_BUF);
+         mx_b64_enc_buf(&s, ccp->cc_user.s, ccp->cc_user.l, mx_B64_BUF);
          cnt = s.l;
       }else{
          su_mem_copy(&cp[0], ccp->cc_user.s, ccp->cc_user.l);
@@ -2461,7 +2463,7 @@ out:
    if (head != NULL)
       n_free(head);
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return ok;
 }
 
@@ -2638,7 +2640,7 @@ imap_getheaders(int volatile bot, int volatile topp) /* TODO iterator!! */
          if (visible(message + j))
             /*ok = */imap_fetchheaders(&mb, message, i, j);
          if (interrupts)
-            n_go_onintr_for_imap(); /* XXX imaplock? */
+            mx_go_onintr_for_imap(); /* XXX imaplock? */
       }
    }
    safe_signal(SIGINT, saveint);
@@ -2956,7 +2958,7 @@ imap_unstore(struct message *m, int n, const char *flag)
 
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -3018,8 +3020,8 @@ c_imapcodec(void *vp){
    }else{
       struct str in, out;
 
-      in.l = su_cs_len(in.s = n_UNCONST(varres));
-      makeprint(&in, &out);
+      in.l = su_cs_len(in.s = UNCONST(char*,varres));
+      mx_makeprint(&in, &out);
       if(fprintf(n_stdout, "%s\n", out.s) < 0){
          n_pstate_err_no = su_err_no();
          vp = NULL;
@@ -3072,7 +3074,7 @@ out:
    imaplock = 0;
 
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return ok != OKAY;
 }
 
@@ -3450,7 +3452,7 @@ jleave:
 j_leave:
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -3610,7 +3612,7 @@ jleave:
 
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -3753,7 +3755,7 @@ imap_copy(struct message *m, int n, const char *name)
 
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -4063,7 +4065,7 @@ imap_search1(const char * volatile spec, int f)
 jleave:
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 #endif /* mx_HAVE_IMAP_SEARCH */
@@ -4123,7 +4125,7 @@ imap_remove(const char * volatile name)
 jleave:
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
@@ -4189,7 +4191,7 @@ imap_rename(const char *old, const char *new)
 jleave:
    NYD_OU;
    if (interrupts)
-      n_go_onintr_for_imap();
+      mx_go_onintr_for_imap();
    return rv;
 }
 
