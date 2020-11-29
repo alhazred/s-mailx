@@ -955,7 +955,9 @@ a_sendout_sendmail(void *v, enum n_mailsend_flags msf)
    if((head.h_to = lextract(str, GTO |
          (ok_blook(fullnames) ? GFULL | GSKIN : GSKIN))) != NULL)
       head.h_mailx_raw_to = n_namelist_dup(head.h_to, head.h_to->n_type);
-   rv = n_mail1(msf, &head, NULL, NULL);
+
+   rv = n_mail1(msf, &head, NIL, NIL, ((n_pstate & n_PS_ARGMOD_LOCAL) != 0));
+
    NYD_OU;
    return (rv != OKAY); /* reverse! */
 }
@@ -2173,7 +2175,7 @@ n_mail(enum n_mailsend_flags msf, struct mx_name *to, struct mx_name *cc,
 
    head.h_attach = attach;
 
-   /* TODO n_exit_status only!!?? */n_mail1(msf, &head, NULL, quotefile);
+   /* TODO n_exit_status only!!?? */n_mail1(msf, &head, NULL, quotefile, FAL0);
 
    if (subject != NULL)
       n_free(out.s);
@@ -2205,7 +2207,7 @@ c_Sendmail(void *v)
 
 FL enum okay
 n_mail1(enum n_mailsend_flags msf, struct header *hp, struct message *quote,
-   char const *quotefile)
+   char const *quotefile, boole local)
 {
 #ifdef mx_HAVE_NET
    struct mx_cred_ctx cc;
@@ -2234,6 +2236,8 @@ n_mail1(enum n_mailsend_flags msf, struct header *hp, struct message *quote,
 
    /* Update some globals we likely need first */
    time_current_update(&time_current, TRU1);
+
+   temporary_compose_mode_hook_control(TRU1, local);
 
    /* Collect user's mail from standard input.  Get the result as mtf */
    mtf = n_collect(msf, hp, quote, quotefile, &_sendout_error);
@@ -2426,7 +2430,7 @@ jleave:
          temporary_compose_mode_hook_call(cp);
    }
 
-   temporary_compose_mode_hook_unroll();
+   temporary_compose_mode_hook_control(FAL0, FAL0);
 
    if (_sendout_error)
       n_exit_status |= n_EXIT_SEND_ERROR;
@@ -2851,7 +2855,7 @@ jleave:
 
 FL enum okay
 n_resend_msg(struct message *mp, struct mx_url *urlp, struct header *hp,
-   boole add_resent)
+   boole add_resent, boole local)
 {
 #ifdef mx_HAVE_NET
    struct mx_cred_ctx cc;
@@ -2906,6 +2910,8 @@ n_resend_msg(struct message *mp, struct mx_url *urlp, struct header *hp,
       n_pstate_err_no = su_ERR_IO;
       goto jerr_io;
    }
+
+   temporary_compose_mode_hook_control(TRU1, local);
 
    /* C99 */{
       char const *cp;
@@ -2987,11 +2993,11 @@ jleave:
 
       mx_fs_close(nfi);
 
-      if(ibuf != NULL){
+      if(ibuf != NIL){
          if((cp = ok_vlook(on_resend_cleanup)) != NIL)
             temporary_compose_mode_hook_call(cp);
 
-         temporary_compose_mode_hook_unroll();
+         temporary_compose_mode_hook_control(FAL0, FAL0);
       }
    }
 
