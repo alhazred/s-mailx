@@ -48,6 +48,7 @@
 #include "mx/compat.h"
 #include "mx/colour.h"
 #include "mx/file-streams.h"
+#include "mx/filter-html.h"
 /* TODO but only for creating chain! */
 #include "mx/filter-quote.h"
 #include "mx/go.h"
@@ -348,19 +349,21 @@ a_send_pipefile(enum sendaction action, struct mx_mime_type_handler *mthp,
       }
    }
 
-   if((mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) == mx_MIME_TYPE_HDL_PTF){
+#ifdef mx_HAVE_FILTER_HTML_TAGSOUP
+   if((mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) == mx_MIME_TYPE_HDL_HTML){
       union {int (*ptf)(void); char const *sh;} u;
 
       fflush(*qbuf);
       if (*qbuf != n_stdout) /* xxx never?  v15: it'll be a filter anyway */
          fflush(n_stdout);
 
-      u.ptf = mthp->mth_ptf;
+      u.ptf = &mx_flthtml_process_main;
       if((rbuf = mx_fs_pipe_open(R(char*,-1), "W", u.sh, NIL, fileno(*qbuf))
             ) == NIL)
          goto jerror;
       goto jleave;
    }
+#endif
 
    i = 0;
 
@@ -819,7 +822,7 @@ jheaders_skip:
                goto jleave;
             break;
          case mx_MIME_TYPE_HDL_TEXT:
-         case mx_MIME_TYPE_HDL_PTF:
+         case mx_MIME_TYPE_HDL_HTML:
             if(oaction == SEND_TODISP_PARTS)
                goto jleave;
             break;
@@ -876,7 +879,7 @@ jheaders_skip:
             }
             break;
          case mx_MIME_TYPE_HDL_TEXT:
-         case mx_MIME_TYPE_HDL_PTF:
+         case mx_MIME_TYPE_HDL_HTML:
             if(oaction == SEND_TODISP_PARTS)
                goto jleave;
             break;
@@ -1105,7 +1108,7 @@ jpipe_close:
       default:
          switch (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK) {
          case mx_MIME_TYPE_HDL_TEXT:
-         case mx_MIME_TYPE_HDL_PTF:
+         case mx_MIME_TYPE_HDL_HTML:
             convert = CONV_FROMB64_T;
             break;
          default:
@@ -1142,7 +1145,7 @@ jpipe_close:
             (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK
                ) == mx_MIME_TYPE_HDL_TEXT ||
             (mthp->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK
-               ) == mx_MIME_TYPE_HDL_PTF)) {
+               ) == mx_MIME_TYPE_HDL_HTML)) {
       char const *tcs;
 
       tcs = ok_vlook(ttycharset);
@@ -1167,7 +1170,7 @@ jpipe_close:
             action = SEND_TOPIPE;
       }
       /* FALLTHRU */
-   case mx_MIME_TYPE_HDL_PTF:
+   case mx_MIME_TYPE_HDL_HTML:
       tmpname = NULL;
       qbuf = obuf;
 
@@ -1392,7 +1395,7 @@ _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
          if (!want_rich)
             goto jflag;
          break;
-      case mx_MIME_TYPE_HDL_PTF:
+      case mx_MIME_TYPE_HDL_HTML:
          if (want_rich) {
 jflag:
             mpp->m_flag |= MDISPLAY;
@@ -1453,8 +1456,8 @@ _send_al7ive_flag_tree(struct mimepart *mpp, enum sendaction action,
          if (hot && !want_rich)
             mpp->m_flag |= MDISPLAY;
          break;
-      case mx_MIME_TYPE_HDL_PTF:
-         if (hot && want_rich)
+      case mx_MIME_TYPE_HDL_HTML:
+         if(hot && want_rich)
             mpp->m_flag |= MDISPLAY;
          break;
       case mx_MIME_TYPE_HDL_CMD:
