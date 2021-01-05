@@ -241,7 +241,7 @@ retain date sender from to cc subject message-id mail-followup-to reply-to
 #\endif
 
 ## }}}
-## Example configurations (on top of defaults above) {{{
+## Example configurations {{{
 
 ## Request strict TLS transport layer security checks
 #\set tls-verify=strict
