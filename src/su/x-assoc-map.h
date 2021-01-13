@@ -662,6 +662,7 @@ a_T_PRISYM(stats)(struct a_T const *self){
       "<<<" a_TYPE_NAME "(%p): statistics\n----------\n",
       self);
    su_log_unlock();
+
    NYD_OU;
 }
 #endif /* DVLOR(1, 0) */
@@ -681,6 +682,7 @@ a_T_PUBSYM(create)(struct a_T *self, u16 flags,
    self->a_T_F(flags) = (flags &= a_T_PRINAME(CREATE_MASK));
    self->a_T_F(tshift) = 2;
    self->a_T_F(tbox) = tbox_or_nil;
+
    NYD_OU;
    return self;
 }
@@ -706,6 +708,7 @@ a_T_PUBSYM(gut)(struct a_T *self){ /* XXX inline */
 
    if(self->a_T_F(array) != NIL)
       self = a_T_PUBSYM(clear)(self);
+
    NYD_OU;
 }
 
@@ -716,6 +719,7 @@ a_T_PUBSYM(assign)(struct a_T *self, struct a_T const *t){ /* XXX inline */
    ASSERT(self);
 
    rv = a_FUN(assign)(self, t, TRU1);
+
    NYD_OU;
    return rv;
 }
@@ -727,6 +731,7 @@ a_T_PUBSYM(assign_elems)(struct a_T *self, struct a_T const *t){/* XXX inline*/
    ASSERT(self);
 
    rv = a_FUN(assign)(self, t, FAL0);
+
    NYD_OU;
    return rv;
 }
@@ -892,6 +897,7 @@ a_V_PUBSYM(set_data)(struct a_V *self, void *value){
    }
 
    rv = a_FUN(replace)(parent, self->a_V_F(node), value);
+
 jleave:
    NYD_OU;
    return rv;
