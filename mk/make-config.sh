@@ -3729,7 +3729,7 @@ else
    printf '/* mx_HAVE_AMALGAMATION: include sources */\n' >> ${h}
    printf '#elif mx_GEN_CONFIG_H + 0 == 1\n' >> ${h}
    printf '# undef mx_GEN_CONFIG_H\n' >> ${h}
-   printf '# define mx_GEN_CONFIG_H 2\n#ifdef mx_SOURCE\n' >> ${h}
+   printf '# define mx_GEN_CONFIG_H 2\n#ifdef mx_MASTER\n' >> ${h}
 
    for i in `printf '%s\n' "${SRCDIR}"su/*.c | ${sort}`; do
       i=`basename "${i}"`

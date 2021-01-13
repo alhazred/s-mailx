@@ -1329,7 +1329,7 @@ struct cw{
  */
 
 #undef VL
-#ifdef mx_SOURCE_MASTER
+#ifdef mx_MASTER
 # ifndef mx_HAVE_AMALGAMATION
 #  define VL
 # else
