@@ -99,13 +99,8 @@ static int           sendpart(struct message *zmp, struct mimepart *ip,
 
 /* Dependent on *mime-alternative-favour-rich* (favour_rich) do a tree walk
  * and check whether there are any such down mpp, which is a .m_multipart of
- * an /alternative container..
- * Afterwards the latter will flag all the subtree accordingly, setting
- * MDISPLAY in mimepart.m_flag if a part shall be displayed.
- * TODO of course all this is hacky in that it should ONLY be done so */
+ * an /alternative container.. */
 static boole        _send_al7ive_have_better(struct mimepart *mpp,
-                        enum sendaction action, boole want_rich);
-static void          _send_al7ive_flag_tree(struct mimepart *mpp,
                         enum sendaction action, boole want_rich);
 
 /* Get a file for an attachment */
@@ -912,11 +907,9 @@ jheaders_skip:
          (curr = &outermost)->outer = NULL;
          curr->mp = ip;
          flags = ok_blook(mime_alternative_favour_rich) ? _DORICH : _NONE;
-         if (!_send_al7ive_have_better(ip->m_multipart, action,
+         if(!_send_al7ive_have_better(ip->m_multipart, action,
                ((flags & _DORICH) != 0)))
             flags ^= _DORICH;
-         _send_al7ive_flag_tree(ip->m_multipart, oaction,
-            ((flags & _DORICH) != 0));
 
          n_SIGMAN_ENTER_SWITCH(&smalter, n_SIGMAN_ALL) {
          case 0:
@@ -1362,14 +1355,18 @@ jleave:
 
 static boole
 _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
-   boole want_rich)
-{
-   boole rv = FAL0;
+      boole want_rich){
+   struct mimepart *plain;
+   boole rv, flagged;
    NYD_IN;
 
-   for(; mpp != NULL; mpp = mpp->m_nextpart){
+   flagged = rv = FAL0;
+   plain = NIL;
+
+   for(; mpp != NIL; mpp = mpp->m_nextpart){
       switch(mpp->m_mime_type){
       case mx_MIME_TYPE_TEXT_PLAIN:
+         plain = mpp;
          if(!want_rich)
             goto jflag;
          continue;
@@ -1380,7 +1377,7 @@ _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
       case mx_MIME_TYPE_ENCRYPTED:
       case mx_MIME_TYPE_MULTI:
          /* Be simple and recurse */
-         if (_send_al7ive_have_better(mpp->m_multipart, action, want_rich))
+         if(_send_al7ive_have_better(mpp->m_multipart, action, want_rich))
             goto jleave;
          continue;
       default:
@@ -1390,18 +1387,23 @@ _send_al7ive_have_better(struct mimepart *mpp, enum sendaction action,
       if(mpp->m_handler == NIL)
          mx_mime_type_handler(mpp->m_handler =
             su_AUTO_ALLOC(sizeof(*mpp->m_handler)), mpp, action);
+
       switch(mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
       case mx_MIME_TYPE_HDL_TEXT:
-         if (!want_rich)
+         if(plain == NIL)
+            plain = mpp;
+         if(!want_rich)
             goto jflag;
          break;
       case mx_MIME_TYPE_HDL_HTML:
-         if (want_rich) {
+         if(want_rich){
 jflag:
+            flagged = TRU1;
             mpp->m_flag |= MDISPLAY;
-            ASSERT(mpp->m_parent != NULL);
+            ASSERT(mpp->m_parent != NIL);
             mpp->m_parent->m_flag |= MDISPLAY;
             rv = TRU1;
+            goto jleave;
          }
          break;
       case mx_MIME_TYPE_HDL_CMD:
@@ -1413,65 +1415,15 @@ jflag:
          break;
       }
    }
+
+   if(plain != NIL && !flagged){
+      mpp = plain;
+      goto jflag;
+   }
+
 jleave:
    NYD_OU;
    return rv;
-}
-
-static void
-_send_al7ive_flag_tree(struct mimepart *mpp, enum sendaction action,
-   boole want_rich)
-{
-   boole hot;
-   NYD_IN;
-
-   ASSERT(mpp->m_parent != NULL);
-   hot = ((mpp->m_parent->m_flag & MDISPLAY) != 0);
-
-   for(; mpp != NIL; mpp = mpp->m_nextpart){
-      switch(mpp->m_mime_type){
-      case mx_MIME_TYPE_TEXT_PLAIN:
-         if(hot && !want_rich)
-            mpp->m_flag |= MDISPLAY;
-         continue;
-      case mx_MIME_TYPE_ALTERNATIVE:
-      case mx_MIME_TYPE_RELATED:
-      case mx_MIME_TYPE_DIGEST:
-      case mx_MIME_TYPE_SIGNED:
-      case mx_MIME_TYPE_ENCRYPTED:
-      case mx_MIME_TYPE_MULTI:
-         /* Be simple and recurse */
-         if (_send_al7ive_have_better(mpp->m_multipart, action, want_rich))
-            goto jleave;
-         continue;
-      default:
-         break;
-      }
-
-      if(mpp->m_handler == NIL)
-         mx_mime_type_handler(mpp->m_handler =
-            su_AUTO_ALLOC(sizeof(*mpp->m_handler)), mpp, action);
-      switch(mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_TYPE_MASK){
-      case mx_MIME_TYPE_HDL_TEXT:
-         if (hot && !want_rich)
-            mpp->m_flag |= MDISPLAY;
-         break;
-      case mx_MIME_TYPE_HDL_HTML:
-         if(hot && want_rich)
-            mpp->m_flag |= MDISPLAY;
-         break;
-      case mx_MIME_TYPE_HDL_CMD:
-         if (hot && want_rich &&
-               (mpp->m_handler->mth_flags & mx_MIME_TYPE_HDL_COPIOUSOUTPUT))
-            mpp->m_flag |= MDISPLAY;
-         break;
-         break;
-      default:
-         break;
-      }
-   }
-jleave:
-   NYD_OU;
 }
 
 static FILE *
